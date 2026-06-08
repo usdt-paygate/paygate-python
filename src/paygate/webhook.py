@@ -9,8 +9,8 @@ from typing import Any
 
 from .exceptions import WebhookVerificationError
 
-SIGNATURE_HEADER = "X-PayGate-Signature"
-TIMESTAMP_HEADER = "X-PayGate-Timestamp"
+SIGNATURE_HEADER = "X-openbcp-Signature"
+TIMESTAMP_HEADER = "X-openbcp-Timestamp"
 
 
 class _DecimalEncoder(json.JSONEncoder):
@@ -59,8 +59,8 @@ def verify_webhook(
         payload:     Raw request body bytes. Do NOT decode and re-encode — key
                      order in the original payload may differ from the sorted
                      canonical form and will break the signature.
-        signature:   Value of the X-PayGate-Signature header (64-char hex).
-        timestamp:   Value of the X-PayGate-Timestamp header (Unix seconds).
+        signature:   Value of the X-openbcp-Signature header (64-char hex).
+        timestamp:   Value of the X-openbcp-Timestamp header (Unix seconds).
         api_key:     Your PayGate API key (used as the HMAC secret).
         max_age_sec: Replay-window size in seconds (default 300 = 5 minutes).
 
@@ -80,8 +80,8 @@ def verify_webhook(
             try:
                 verify_webhook(
                     request.get_data(),                          # raw bytes
-                    request.headers["X-PayGate-Signature"],
-                    request.headers["X-PayGate-Timestamp"],
+                    request.headers["X-openbcp-Signature"],
+                    request.headers["X-openbcp-Timestamp"],
                     api_key=os.environ["PAYGATE_API_KEY"],
                 )
             except WebhookVerificationError as exc:

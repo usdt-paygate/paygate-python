@@ -18,18 +18,20 @@ class PayGateClient:
         from paygate import PayGateClient
 
         client = PayGateClient(
-            base_url="http://localhost:9000",
+            base_url="https://openbcp.com",
             api_key="your-api-key",
         )
 
-        invoice = client.create_payment("29.99", external_id="order-123")
-        print(invoice.deposit_address)
-        print(invoice.expires_at)
+        # Create invoice — redirect customer to payment_url
+        invoice = client.create_payment("29.99", external_id="order-123",
+                                        callback_url="https://yoursite.com/webhook")
+        redirect_customer_to(invoice.payment_url)
+        # openbcp hosts the checkout page — QR code, countdown, confirmation
 
-        # Later — check if paid
+        # In your webhook handler — verify signature, then fulfil order
         invoice = client.get_payment(invoice.invoice_id)
         if invoice.is_paid():
-            print("Payment confirmed!")
+            fulfil_order(invoice.external_id)
 
     Context manager::
 
@@ -53,7 +55,7 @@ class PayGateClient:
         self._session = session or requests.Session()
         self._session.headers.update(
             {
-                "X-PayGate-Api-Key": api_key,
+                "X-openbcp-Api-Key": api_key,
                 "Content-Type": "application/json",
                 "Accept": "application/json",
             }
@@ -107,8 +109,9 @@ class PayGateClient:
             fiat_currency: ISO 4217 code, defaults to ``"USD"``.
 
         Returns:
-            :class:`Invoice` with ``deposit_address``, ``invoice_id``,
-            ``amount_usdt``, and ``expires_at`` populated.
+            :class:`Invoice` with ``payment_url`` (redirect the customer here),
+            ``invoice_id``, ``amount_usdt``, ``merchant_amount_usdt``,
+            ``platform_fee_usdt``, and ``expires_at`` populated.
 
         Raises:
             PayGateError: on API or network error.

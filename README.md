@@ -1,11 +1,11 @@
 # paygate-python
 
-Official Python SDK for the [PayGate](https://github.com/yourorg/paygate) USDT BEP20 payment gateway.
+Official Python SDK for the [openbcp](https://github.com/usdt-paygate/paygate-python) USDT BEP20 payment gateway.
 
 ## Installation
 
 ```bash
-pip install paygate-python
+pip install git+https://github.com/usdt-paygate/paygate-python.git
 ```
 
 ## Quick Start
@@ -14,18 +14,19 @@ pip install paygate-python
 from paygate import PayGateClient
 
 client = PayGateClient(
-    base_url="http://localhost:9000",   # your PayGate instance
-    api_key="your-api-key",             # from the dashboard → Integration
+    base_url="https://openbcp.com",   # hosted gateway
+    api_key="your-api-key",           # from the dashboard → Integration
 )
 
-# 1. Create a payment invoice
+# 1. Create a payment invoice — redirect customer to payment_url
 invoice = client.create_payment(
     "29.99",
     external_id="order-123",
-    callback_url="https://yoursite.com/webhook",
+    callback_url="https://yoursite.com/webhooks/openbcp",
 )
 
 print(invoice.invoice_id)       # 42
+print(invoice.payment_url)      # https://openbcp.com/pay/<token>  ← redirect here
 print(invoice.deposit_address)  # 0x4a7b...
 print(invoice.amount_usdt)      # Decimal('29.99')
 print(invoice.expires_at)       # datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
@@ -50,17 +51,20 @@ with PayGateClient(base_url=..., api_key=...) as client:
 
 ## Webhook Verification
 
+Webhooks are signed with `HMAC-SHA256` over `"{timestamp}.{raw_body}"` using your API key.
+Both the `X-openbcp-Signature` and `X-openbcp-Timestamp` headers must be present and verified.
+
 ```python
 from paygate import verify_webhook, WebhookVerificationError
 
 # Flask
-@app.post("/webhook")
+@app.post("/webhooks/openbcp")
 def webhook():
     try:
         verify_webhook(
-            request.get_data(),                          # raw bytes — do NOT decode first
-            request.headers["X-PayGate-Signature"],
-            request.headers["X-PayGate-Timestamp"],
+            request.get_data(),                            # raw bytes — do NOT decode first
+            request.headers["X-openbcp-Signature"],
+            request.headers["X-openbcp-Timestamp"],
             api_key=os.environ["PAYGATE_API_KEY"],
         )
     except WebhookVerificationError as exc:
@@ -68,14 +72,14 @@ def webhook():
         abort(400)
 
     data = request.get_json()
-    if data["status"] == "PAID":
+    if data["status"] in ("PAID", "OVERPAID"):
         fulfil_order(data["external_id"])
     return "", 202
 ```
 
 > **Important:** always pass the raw request body (`request.get_data()` in Flask,
 > `await request.body()` in FastAPI) — not a re-serialised dict. The HMAC is
-> computed over the exact bytes sent by PayGate.
+> computed over the exact bytes sent by openbcp.
 
 ## API Reference
 
@@ -94,8 +98,9 @@ def webhook():
 | Field | Type | Notes |
 |-------|------|-------|
 | `invoice_id` | `int` | |
+| `payment_url` | `str` | Hosted checkout URL — redirect the customer here |
 | `deposit_address` | `str` | BEP20 address to send USDT to |
-| `amount_usdt` | `Decimal` | Exact amount expected |
+| `amount_usdt` | `Decimal` | Exact amount expected (merchant amount + platform fee) |
 | `payment_status` | `str` | `UNPAID` / `PARTIAL` / `PAID` / `OVERPAID` / `EXPIRED` |
 | `expires_at` | `datetime` | UTC-aware |
 | `transactions` | `list[Transaction]` | |

@@ -53,6 +53,9 @@ class Invoice:
     transactions: List[Transaction] = field(default_factory=list)
     external_id: Optional[str] = None
     created_at: Optional[datetime] = None
+    payment_url: Optional[str] = None
+    merchant_amount_usdt: Optional[Decimal] = None
+    platform_fee_usdt: Optional[Decimal] = None
 
     # ── Convenience ───────────────────────────────────────────────────────────
 
@@ -92,4 +95,7 @@ class Invoice:
             ],
             external_id=d.get("external_id"),
             created_at=_parse_dt(d.get("created_at")),
+            payment_url=d.get("payment_url"),
+            merchant_amount_usdt=_parse_decimal(d.get("merchant_amount_usdt")),
+            platform_fee_usdt=_parse_decimal(d.get("platform_fee_usdt")),
         )

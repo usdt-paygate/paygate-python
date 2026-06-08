@@ -26,8 +26,8 @@ Quick start::
         try:
             verify_webhook(
                 request.get_data(),
-                request.headers["X-PayGate-Signature"],
-                request.headers["X-PayGate-Timestamp"],
+                request.headers["X-openbcp-Signature"],
+                request.headers["X-openbcp-Timestamp"],
                 api_key=os.environ["PAYGATE_API_KEY"],
             )
         except WebhookVerificationError:
