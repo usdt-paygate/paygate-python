@@ -33,7 +33,7 @@ print(invoice.expires_at)       # datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
 
 # 2. Check status (server-side)
 invoice = client.get_payment(invoice.invoice_id)
-print(invoice.payment_status)   # "UNPAID" | "PARTIAL" | "PAID" | "OVERPAID" | "EXPIRED"
+print(invoice.payment_status)   # "UNPAID" | "PARTIAL" | "PAID" | "OVERPAID" | "EXPIRED" | "CANCELLED"
 print(invoice.is_paid())        # True / False
 
 # 3. Block until paid (CLI tools, scripts)
@@ -74,6 +74,8 @@ def webhook():
     data = request.get_json()
     if data["status"] in ("PAID", "OVERPAID"):
         fulfil_order(data["external_id"])
+    elif data["status"] in ("EXPIRED", "CANCELLED"):
+        cancel_order(data["external_id"])
     return "", 202
 ```
 
@@ -101,13 +103,14 @@ def webhook():
 | `payment_url` | `str` | Hosted checkout URL — redirect the customer here |
 | `deposit_address` | `str` | BEP20 address to send USDT to |
 | `amount_usdt` | `Decimal` | Exact amount expected (merchant amount + platform fee) |
-| `payment_status` | `str` | `UNPAID` / `PARTIAL` / `PAID` / `OVERPAID` / `EXPIRED` |
+| `payment_status` | `str` | `UNPAID` / `PARTIAL` / `PAID` / `OVERPAID` / `EXPIRED` / `CANCELLED` |
 | `expires_at` | `datetime` | UTC-aware |
 | `transactions` | `list[Transaction]` | |
 | `external_id` | `str \| None` | Your order reference |
 | `created_at` | `datetime \| None` | |
 | `is_paid()` | `bool` | `True` if PAID or OVERPAID |
 | `is_expired()` | `bool` | |
+| `is_cancelled()` | `bool` | |
 | `total_confirmed` | `Decimal` | Sum of confirmed tx amounts |
 
 ### `verify_webhook(payload, signature, timestamp, api_key, *, max_age_sec=300)`

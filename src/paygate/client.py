@@ -103,7 +103,8 @@ class PayGateClient:
                            float precision issues (e.g. ``"29.99"`` not ``29.99``).
             external_id:   Your internal order/reference ID stored with the invoice.
             callback_url:  URL that will receive a signed webhook POST when the
-                           payment status changes to PAID, OVERPAID, or PARTIAL.
+                           payment status changes (PAID, OVERPAID, PARTIAL,
+                           EXPIRED, or CANCELLED).
             metadata:      Arbitrary JSON dict stored with the invoice.
             amount_fiat:   Original fiat amount (informational only).
             fiat_currency: ISO 4217 code, defaults to ``"USD"``.
@@ -202,8 +203,8 @@ class PayGateClient:
             The paid :class:`Invoice`.
 
         Raises:
-            PayGateError: if the invoice expires before payment, or if
-                          ``timeout`` is exceeded.
+            PayGateError: if the invoice expires or is cancelled before payment,
+                          or if ``timeout`` is exceeded.
             PaymentNotFound: if the invoice does not exist.
 
         Example::
@@ -225,6 +226,10 @@ class PayGateClient:
             if invoice.is_expired():
                 raise PayGateError(
                     f"Invoice {invoice_id} expired before payment was received"
+                )
+            if invoice.is_cancelled():
+                raise PayGateError(
+                    f"Invoice {invoice_id} was cancelled"
                 )
             if time.monotonic() >= deadline:
                 raise PayGateError(
