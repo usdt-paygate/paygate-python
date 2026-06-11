@@ -91,6 +91,7 @@ class PayGateClient:
         *,
         external_id: Optional[str] = None,
         callback_url: Optional[str] = None,
+        success_url: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
         amount_fiat: Optional[float] = None,
         fiat_currency: Optional[str] = None,
@@ -105,6 +106,10 @@ class PayGateClient:
             callback_url:  URL that will receive a signed webhook POST when the
                            payment status changes (PAID, OVERPAID, PARTIAL,
                            EXPIRED, or CANCELLED).
+            success_url:   URL the customer is redirected to after payment is
+                           confirmed on the hosted checkout page. Must be http
+                           or https. If omitted, the checkout page attempts to
+                           close the tab instead.
             metadata:      Arbitrary JSON dict stored with the invoice.
             amount_fiat:   Original fiat amount (informational only).
             fiat_currency: ISO 4217 code, defaults to ``"USD"``.
@@ -122,6 +127,8 @@ class PayGateClient:
             payload["external_id"] = external_id
         if callback_url is not None:
             payload["callback_url"] = callback_url
+        if success_url is not None:
+            payload["success_url"] = success_url
         if metadata is not None:
             payload["metadata"] = metadata
         if amount_fiat is not None:
