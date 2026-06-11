@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import List, Literal, Optional
 
-PaymentStatus = Literal["UNPAID", "PARTIAL", "PAID", "OVERPAID", "EXPIRED"]
+PaymentStatus = Literal["UNPAID", "PARTIAL", "PAID", "OVERPAID", "EXPIRED", "CANCELLED"]
 TxStatus = Literal["PENDING", "CONFIRMED"]
 
 
@@ -65,6 +65,9 @@ class Invoice:
 
     def is_expired(self) -> bool:
         return self.payment_status == "EXPIRED"
+
+    def is_cancelled(self) -> bool:
+        return self.payment_status == "CANCELLED"
 
     def is_pending(self) -> bool:
         return self.payment_status in ("UNPAID", "PARTIAL")

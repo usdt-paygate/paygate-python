@@ -32,7 +32,11 @@ Quick start::
             )
         except WebhookVerificationError:
             abort(400)
-        # handle request.get_json()["status"] == "PAID"
+        data = request.get_json()
+        if data["status"] in ("PAID", "OVERPAID"):
+            fulfil_order(data["external_id"])
+        elif data["status"] in ("EXPIRED", "CANCELLED"):
+            cancel_order(data["external_id"])
         return "", 202
 """
 

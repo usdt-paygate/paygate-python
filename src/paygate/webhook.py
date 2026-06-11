@@ -87,7 +87,10 @@ def verify_webhook(
             except WebhookVerificationError as exc:
                 abort(400, str(exc))
             data = request.get_json()
-            # handle data["status"] == "PAID" ...
+            if data["status"] in ("PAID", "OVERPAID"):
+                fulfil_order(data["external_id"])
+            elif data["status"] in ("EXPIRED", "CANCELLED"):
+                cancel_order(data["external_id"])
             return "", 202
     """
     sig = signature.strip().lower()
