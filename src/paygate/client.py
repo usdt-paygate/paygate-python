@@ -93,8 +93,6 @@ class PayGateClient:
         callback_url: Optional[str] = None,
         success_url: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
-        amount_fiat: Optional[float] = None,
-        fiat_currency: Optional[str] = None,
     ) -> Invoice:
         """
         Create a new USDT payment invoice.
@@ -110,9 +108,9 @@ class PayGateClient:
                            confirmed on the hosted checkout page. Must be http
                            or https. If omitted, the checkout page attempts to
                            close the tab instead.
-            metadata:      Arbitrary JSON dict stored with the invoice.
-            amount_fiat:   Original fiat amount (informational only).
-            fiat_currency: ISO 4217 code, defaults to ``"USD"``.
+            metadata:      Arbitrary JSON dict stored with the invoice. Use this
+                           for any custom merchant data including original fiat
+                           reference price (e.g. ``{"price_eur": 30}``).
 
         Returns:
             :class:`Invoice` with ``payment_url`` (redirect the customer here),
@@ -137,10 +135,6 @@ class PayGateClient:
             payload["success_url"] = success_url
         if metadata is not None:
             payload["metadata"] = metadata
-        if amount_fiat is not None:
-            payload["amount_fiat"] = amount_fiat
-        if fiat_currency is not None:
-            payload["fiat_currency"] = fiat_currency
 
         body = self._request("POST", "/api/v1/payment", json=payload)
         return Invoice.from_dict(body)

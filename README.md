@@ -152,7 +152,7 @@ def webhook():
 
 | Method | Description |
 |--------|-------------|
-| `create_payment(amount_usdt, *, external_id, callback_url, success_url, metadata, amount_fiat, fiat_currency)` | Create an invoice → `Invoice` |
+| `create_payment(amount_usdt, *, external_id, callback_url, success_url, metadata)` | Create an invoice → `Invoice` |
 | `get_payment(invoice_id)` | Full invoice with transactions (auth required) → `Invoice` |
 | `get_payment_status(invoice_id)` | Quick public status check (no auth) → `Invoice` |
 | `poll_until_paid(invoice_id, *, poll_interval=5, timeout=3600, include_partial=False)` | Block until paid → `Invoice` |
