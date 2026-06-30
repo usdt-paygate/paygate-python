@@ -1,6 +1,6 @@
 # paygate-python
 
-Official Python SDK for the [openbcp](https://github.com/usdt-paygate/paygate-python) USDT BEP20 payment gateway.
+Official Python SDK for the [openbcp](https://openbcp.com) USDT BEP20 payment gateway.
 
 ## Installation
 
@@ -23,6 +23,7 @@ invoice = client.create_payment(
     "29.99",
     external_id="order-123",
     callback_url="https://yoursite.com/webhooks/openbcp",
+    success_url="https://yoursite.com/orders/123/success",
 )
 
 print(invoice.invoice_id)       # 42
@@ -41,6 +42,48 @@ paid = client.poll_until_paid(invoice.invoice_id, timeout=900)
 print("Received", paid.total_confirmed, "USDT")
 ```
 
+## Partial & Overpaid Payment Fields
+
+Every status response and webhook now includes amount fields so you can detect underpayment, overpayment, and partial-then-expired scenarios:
+
+```python
+invoice = client.get_payment_status(42)
+
+print(invoice.amount_usdt)       # Decimal('5.000000')  ← expected
+print(invoice.amount_received)   # Decimal('4.000000')  ← actually received
+print(invoice.shortfall)         # Decimal('1.000000')  ← still needed
+print(invoice.overpaid_by)       # Decimal('0.000000')  ← excess (0 when PARTIAL)
+
+# Helper methods
+invoice.is_paid()         # True for PAID or OVERPAID — safe to fulfil
+invoice.is_partial()      # True for PARTIAL — payment incomplete, do NOT fulfil
+invoice.is_expired()      # True for EXPIRED
+invoice.is_cancelled()    # True for CANCELLED
+invoice.is_pending()      # True while UNPAID or PARTIAL
+invoice.needs_refund()    # True when EXPIRED/CANCELLED with funds received
+```
+
+## Resume Payment
+
+When an invoice expires with a partial payment, the merchant can resume it instead of refunding — creating a continuation invoice for the shortfall that reuses the **same deposit address**:
+
+```python
+# Customer's invoice expired with 4/5 USDT paid
+try:
+    paid = client.poll_until_paid(invoice_id=42, timeout=900)
+except PayGateError:
+    # Expired — offer customer a chance to complete payment
+    resumed = client.resume_payment(invoice_id=42)
+    print(resumed['amount_usdt'])              # '1.000000' (just the shortfall)
+    print(resumed['amount_already_received'])  # '4.000000'
+    print(resumed['payment_url'])              # new URL for the customer
+    print(resumed['deposit_address'])          # SAME as original
+```
+
+**Cascade behaviour:** when the customer pays the continuation invoice, the original invoice is automatically marked PAID and the webhook fires on the **original invoice_id** — your webhook handler does not need any changes.
+
+The method is idempotent: calling it twice returns the same continuation with `resumed_existing: True`.
+
 ## Context Manager
 
 ```python
@@ -49,7 +92,7 @@ with PayGateClient(base_url=..., api_key=...) as client:
     # session is automatically closed on exit
 ```
 
-## Webhook Verification
+## Webhook Verification & Complete Handler
 
 Webhooks are signed with `HMAC-SHA256` over `"{timestamp}.{raw_body}"` using your API key.
 Both the `X-openbcp-Signature` and `X-openbcp-Timestamp` headers must be present and verified.
@@ -57,7 +100,7 @@ Both the `X-openbcp-Signature` and `X-openbcp-Timestamp` headers must be present
 ```python
 from paygate import verify_webhook, WebhookVerificationError
 
-# Flask
+# Flask — full handler covering every status
 @app.post("/webhooks/openbcp")
 def webhook():
     try:
@@ -71,12 +114,32 @@ def webhook():
         app.logger.warning("Bad webhook: %s", exc)
         abort(400)
 
-    data = request.get_json()
-    if data["status"] in ("PAID", "OVERPAID"):
+    data   = request.get_json()
+    status = data["status"]
+
+    if status in ("PAID", "OVERPAID"):
+        # ✅ Safe to fulfil. data["paid"] is True.
         fulfil_order(data["external_id"])
-    elif data["status"] in ("EXPIRED", "CANCELLED"):
+        if status == "OVERPAID":
+            log_overpayment(data["external_id"], data["overpaid_by"])
+
+    elif status == "PARTIAL":
+        # ⏳ Customer underpaid — do NOT fulfil.
+        # data["shortfall"] tells you how much more is needed.
+        notify_underpaid(data["external_id"], data["shortfall"])
+
+    elif status == "EXPIRED":
+        # ❌ Invoice timed out.
+        if float(data["amount_received"]) > 0:
+            # Funds received — a refund record was auto-created.
+            # Consider calling client.resume_payment(data["invoice_id"]) instead.
+            record_unsettled(data["external_id"], data["amount_received"])
         cancel_order(data["external_id"])
-    return "", 202
+
+    elif status == "CANCELLED":
+        cancel_order(data["external_id"])
+
+    return "", 202   # MUST return 202 — anything else triggers retry
 ```
 
 > **Important:** always pass the raw request body (`request.get_data()` in Flask,
@@ -93,6 +156,7 @@ def webhook():
 | `get_payment(invoice_id)` | Full invoice with transactions (auth required) → `Invoice` |
 | `get_payment_status(invoice_id)` | Quick public status check (no auth) → `Invoice` |
 | `poll_until_paid(invoice_id, *, poll_interval=5, timeout=3600, include_partial=False)` | Block until paid → `Invoice` |
+| `resume_payment(invoice_id)` | Resume EXPIRED-with-partial invoice → `dict` |
 | `close()` | Close the HTTP session |
 
 ### `Invoice`
@@ -102,20 +166,33 @@ def webhook():
 | `invoice_id` | `int` | |
 | `payment_url` | `str` | Hosted checkout URL — redirect the customer here |
 | `deposit_address` | `str` | BEP20 address to send USDT to |
-| `amount_usdt` | `Decimal` | Exact amount expected (merchant amount + platform fee) |
+| `amount_usdt` | `Decimal` | Gross amount expected (merchant amount + platform fee) |
+| `amount_received` | `Decimal \| None` | Total confirmed on-chain |
+| `shortfall` | `Decimal \| None` | How much more is needed (0 when PAID/OVERPAID) |
+| `overpaid_by` | `Decimal \| None` | How much extra was sent (0 when PARTIAL/PAID) |
 | `payment_status` | `str` | `UNPAID` / `PARTIAL` / `PAID` / `OVERPAID` / `EXPIRED` / `CANCELLED` |
 | `expires_at` | `datetime` | UTC-aware |
-| `transactions` | `list[Transaction]` | |
+| `transactions` | `list[Transaction]` | Each tx has `from_address`, `amount_usdt`, `confirmations` |
 | `external_id` | `str \| None` | Your order reference |
 | `created_at` | `datetime \| None` | |
-| `is_paid()` | `bool` | `True` if PAID or OVERPAID |
-| `is_expired()` | `bool` | |
-| `is_cancelled()` | `bool` | |
-| `total_confirmed` | `Decimal` | Sum of confirmed tx amounts |
+| `is_paid()` | `bool` | True if PAID or OVERPAID — safe to fulfil |
+| `is_partial()` | `bool` | True if PARTIAL — payment incomplete |
+| `is_expired()` | `bool` | True if EXPIRED |
+| `is_cancelled()` | `bool` | True if CANCELLED |
+| `is_pending()` | `bool` | True while UNPAID or PARTIAL |
+| `needs_refund()` | `bool` | True when EXPIRED/CANCELLED with funds received |
+| `total_confirmed` | `Decimal` | Sum of confirmed tx amounts (or `amount_received` if available) |
 
 ### `verify_webhook(payload, signature, timestamp, api_key, *, max_age_sec=300)`
 
 Returns `True` or raises `WebhookVerificationError`.
+
+## Multi-Wallet Payments
+
+A single invoice can receive payments from unlimited wallets. Each transaction's `from_address` is tracked separately. For refund routing:
+
+- **Underpaid + expired:** each unique sender gets their own refund record back to their wallet.
+- **Overpaid:** FIFO routing — the wallet that tipped the total past 100% gets the excess portion refunded; any later senders get refunded in full.
 
 ## Exceptions
 

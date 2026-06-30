@@ -102,10 +102,10 @@ class PayGateClient:
         Args:
             amount_usdt:   Amount to charge in USDT. Pass as a string to avoid
                            float precision issues (e.g. ``"29.99"`` not ``29.99``).
-            external_id:   Your internal order/reference ID stored with the invoice.
-            callback_url:  URL that will receive a signed webhook POST when the
-                           payment status changes (PAID, OVERPAID, PARTIAL,
-                           EXPIRED, or CANCELLED).
+            external_id:   Your internal order/reference ID stored with the invoice
+                           and echoed back in every webhook.
+            callback_url:  URL that receives a signed webhook POST on every status
+                           change: PAID, OVERPAID, PARTIAL, EXPIRED, CANCELLED.
             success_url:   URL the customer is redirected to after payment is
                            confirmed on the hosted checkout page. Must be http
                            or https. If omitted, the checkout page attempts to
@@ -118,6 +118,12 @@ class PayGateClient:
             :class:`Invoice` with ``payment_url`` (redirect the customer here),
             ``invoice_id``, ``amount_usdt``, ``merchant_amount_usdt``,
             ``platform_fee_usdt``, and ``expires_at`` populated.
+
+        Webhook statuses you will receive on ``callback_url``:
+            - ``PAID`` / ``OVERPAID`` → fulfil the order (``paid=True``)
+            - ``PARTIAL`` → customer underpaid, do NOT fulfil, check ``shortfall``
+            - ``EXPIRED`` → timed out; if ``amount_received > 0`` a refund was queued
+            - ``CANCELLED`` → customer cancelled
 
         Raises:
             PayGateError: on API or network error.
@@ -162,14 +168,20 @@ class PayGateClient:
         """
         Check payment status using the public (no-auth) endpoint.
 
-        Suitable for browser/client-side polling. Returns less detail than
-        :meth:`get_payment` — no ``external_id`` or ``created_at``.
+        Suitable for server-side polling. Returns ``payment_status``,
+        ``amount_received``, ``shortfall``, ``overpaid_by``, and
+        ``transactions``. No ``external_id`` or ``created_at``.
+
+        Use :meth:`invoice.is_paid` to check if the order can be fulfilled.
+        Use :meth:`invoice.is_partial` to detect underpayment.
+        Use :meth:`invoice.needs_refund` to detect expired-with-funds cases.
 
         Args:
             invoice_id: Integer invoice ID.
 
         Returns:
-            :class:`Invoice` with ``payment_status`` and ``transactions``.
+            :class:`Invoice` with ``payment_status``, ``amount_received``,
+            ``shortfall``, ``overpaid_by``, and ``transactions``.
 
         Raises:
             PaymentNotFound: if the invoice does not exist.
@@ -210,8 +222,8 @@ class PayGateClient:
             The paid :class:`Invoice`.
 
         Raises:
-            PayGateError: if the invoice expires or is cancelled before payment,
-                          or if ``timeout`` is exceeded.
+            PayGateError: if the invoice expires before payment, or if
+                          ``timeout`` is exceeded.
             PaymentNotFound: if the invoice does not exist.
 
         Example::
@@ -234,16 +246,57 @@ class PayGateClient:
                 raise PayGateError(
                     f"Invoice {invoice_id} expired before payment was received"
                 )
-            if invoice.is_cancelled():
-                raise PayGateError(
-                    f"Invoice {invoice_id} was cancelled"
-                )
             if time.monotonic() >= deadline:
                 raise PayGateError(
                     f"poll_until_paid timed out after {timeout:.0f}s "
                     f"(invoice {invoice_id} still {invoice.payment_status})"
                 )
             time.sleep(poll_interval)
+
+    def resume_payment(self, invoice_id: int) -> dict:
+        """
+        Resume an EXPIRED-with-partial invoice by creating a continuation invoice
+        for the shortfall amount. Reuses the SAME deposit address — the customer
+        can pay via the old QR/URL or the new payment_url. Both work.
+
+        When the continuation is paid, the original invoice is automatically
+        marked PAID via cascade and the webhook fires on the ORIGINAL invoice_id.
+        Your webhook handler does NOT need any changes to work with resume.
+
+        Args:
+            invoice_id: ID of the original EXPIRED invoice with partial payment.
+
+        Returns:
+            Dict with: ``continuation_invoice_id``, ``original_invoice_id``,
+            ``amount_usdt`` (the shortfall), ``amount_already_received``,
+            ``deposit_address`` (same as original), ``payment_url`` (to share
+            with customer), ``expires_at``, ``cancelled_refund_count``.
+
+            If the invoice was already resumed previously, returns the existing
+            continuation with ``resumed_existing: True`` — idempotent.
+
+        Raises:
+            PayGateError: If invoice is not EXPIRED, has no partial payment,
+                          or doesn't belong to your account.
+            PaymentNotFound: If invoice doesn't exist.
+
+        Example::
+
+            # Customer's invoice expired with 4/5 USDT paid
+            try:
+                paid = client.poll_until_paid(invoice_id=42, timeout=900)
+            except PayGateError:
+                # Expired — offer customer a chance to complete payment
+                resumed = client.resume_payment(invoice_id=42)
+                send_email(
+                    customer.email,
+                    subject="Finish your order",
+                    body=f"Pay the remaining {resumed['amount_usdt']} USDT here: "
+                         f"{resumed['payment_url']}"
+                )
+        """
+        body = self._request("POST", f"/api/v1/payment/{invoice_id}/resume")
+        return body
 
     # ── Context manager ───────────────────────────────────────────────────────
 
