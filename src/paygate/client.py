@@ -292,6 +292,85 @@ class PayGateClient:
         body = self._request("POST", f"/api/v1/payment/{invoice_id}/resume")
         return body
 
+    # ── Refund API ────────────────────────────────────────────────────────────
+
+    def list_refunds(
+        self,
+        *,
+        status: Optional[str] = None,
+        type: Optional[str] = None,
+        invoice_id: Optional[int] = None,
+        from_date: Optional[str] = None,
+        to_date: Optional[str] = None,
+        page: int = 1,
+        limit: int = 50,
+    ) -> dict:
+        """
+        List refunds for the authenticated merchant with optional filters.
+
+        Args:
+            status:     pending | approved | declined | processing | sent |
+                        confirmed | failed | resumed
+            type:       underpaid | overpaid | manual
+            invoice_id: filter to one invoice
+            from_date:  ISO date (YYYY-MM-DD) — inclusive lower bound
+            to_date:    ISO date (YYYY-MM-DD) — inclusive upper bound
+            page:       1-based, default 1
+            limit:      max items per page (1-200), default 50
+
+        Returns:
+            ``{"count": int, "page": int, "limit": int, "results": [refund, ...]}``
+        """
+        params: Dict[str, Any] = {"page": page, "limit": limit}
+        if status:     params["status"] = status
+        if type:       params["type"] = type
+        if invoice_id: params["invoice_id"] = invoice_id
+        if from_date:  params["from_date"] = from_date
+        if to_date:    params["to_date"] = to_date
+        return self._request("GET", "/api/v1/refunds", params=params)
+
+    def get_refund(self, refund_id: int) -> dict:
+        """Retrieve a single refund record with full detail."""
+        body = self._request("GET", f"/api/v1/refunds/{refund_id}")
+        return body.get("refund", body)
+
+    def approve_refund(self, refund_id: int) -> dict:
+        """Approve a pending or failed refund — queues it for tonight's batch."""
+        body = self._request("POST", f"/api/v1/refunds/{refund_id}/approve")
+        return body.get("refund", body)
+
+    def decline_refund(self, refund_id: int, *, reason: Optional[str] = None) -> dict:
+        """Decline a pending refund — moves it to the blacklist."""
+        payload = {"reason": reason} if reason else {}
+        body = self._request("POST", f"/api/v1/refunds/{refund_id}/decline", json=payload)
+        return body.get("refund", body)
+
+    def restore_refund(self, refund_id: int) -> dict:
+        """Restore a blacklisted refund — re-queues it for the next batch."""
+        body = self._request("POST", f"/api/v1/refunds/{refund_id}/restore")
+        return body.get("refund", body)
+
+    def get_refund_settings(self) -> dict:
+        """Return current per-type refund mode configuration.
+
+        Returns: ``{"underpaid_mode": "auto"|"manual", "overpaid_mode": ...}``
+        """
+        return self._request("GET", "/api/v1/settings/refunds")
+
+    def update_refund_settings(
+        self,
+        *,
+        underpaid_mode: Optional[str] = None,
+        overpaid_mode: Optional[str] = None,
+    ) -> dict:
+        """Update per-type refund mode. Each accepts ``"auto"`` or ``"manual"``."""
+        payload: Dict[str, Any] = {}
+        if underpaid_mode is not None: payload["underpaid_mode"] = underpaid_mode
+        if overpaid_mode is not None:  payload["overpaid_mode"]  = overpaid_mode
+        if not payload:
+            raise ValueError("At least one of underpaid_mode or overpaid_mode is required")
+        return self._request("POST", "/api/v1/settings/refunds", json=payload)
+
     # ── Context manager ───────────────────────────────────────────────────────
 
     def close(self) -> None:

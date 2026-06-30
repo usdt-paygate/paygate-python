@@ -157,7 +157,57 @@ def webhook():
 | `get_payment_status(invoice_id)` | Quick public status check (no auth) → `Invoice` |
 | `poll_until_paid(invoice_id, *, poll_interval=5, timeout=3600, include_partial=False)` | Block until paid → `Invoice` |
 | `resume_payment(invoice_id)` | Resume EXPIRED-with-partial invoice → `dict` |
+| `list_refunds(*, status, type, invoice_id, from_date, to_date, page, limit)` | List refunds with filters → `dict` |
+| `get_refund(refund_id)` | Single refund detail → `dict` |
+| `approve_refund(refund_id)` | Approve a refund (auto-queues for batch) → `dict` |
+| `decline_refund(refund_id, *, reason)` | Decline a refund (moves to blacklist) → `dict` |
+| `restore_refund(refund_id)` | Restore a blacklisted refund → `dict` |
+| `get_refund_settings()` | Read per-type refund mode → `dict` |
+| `update_refund_settings(*, underpaid_mode, overpaid_mode)` | Update per-type refund mode → `dict` |
 | `close()` | Close the HTTP session |
+
+## Refund API (Multi-Tenant Platforms)
+
+For SaaS/platform merchants managing payments on behalf of many tenants, the Refund API lets you automate refund approval/decline/notification end-to-end without touching the dashboard:
+
+```python
+# List pending underpaid refunds
+result = client.list_refunds(status="pending", type="underpaid")
+print(result["count"], "pending")
+
+# Auto-approve every pending refund programmatically
+for r in result["results"]:
+    client.approve_refund(r["refund_id"])
+
+# Configure per-type mode (recommended for platforms):
+#   underpaid → auto (no debate, just refund)
+#   overpaid  → manual (may want to offer credit instead)
+client.update_refund_settings(underpaid_mode="auto", overpaid_mode="manual")
+
+# Decline with reason
+client.decline_refund(123, reason="Customer requested credit instead")
+```
+
+### Refund Webhook Events
+
+In addition to invoice webhooks, openbcp fires `refund.approved`, `refund.sent`, `refund.declined`, and `refund.failed` events using the same HMAC signature scheme. Discriminate by the `event` field in the payload:
+
+```python
+data = request.get_json()
+event = data.get("event")
+
+if event and event.startswith("refund."):
+    if event == "refund.sent":
+        mark_refunded(data["invoice_id"], data["txid"])
+        notify_tenant(data["external_id"], data["amount_usdt"])
+    elif event == "refund.failed":
+        alert_ops(data["refund_id"], data["reason"])
+else:
+    # Invoice webhook — existing handler
+    handle_invoice_status(data)
+
+return "", 202
+```
 
 ### `Invoice`
 
